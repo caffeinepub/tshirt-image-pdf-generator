@@ -1,13 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -21,15 +14,14 @@ import { Toaster } from "@/components/ui/sonner";
 import {
   CheckCircle2,
   Download,
-  FileDown,
+  DownloadCloud,
   Loader2,
   RefreshCw,
-  Save,
   Shirt,
   X,
   Zap,
 } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
 
 const ALL_CATEGORIES = [
@@ -51,7 +43,6 @@ const ALL_CATEGORIES = [
 ];
 
 type ImageSize = "512" | "768" | "1024";
-type Resolution = "standard" | "high" | "ultra";
 type Quantity = "10" | "50" | "100";
 
 interface GeneratedImage {
@@ -61,8 +52,6 @@ interface GeneratedImage {
   number: number;
   seed: number;
   url: string;
-  loaded: boolean;
-  error: boolean;
 }
 
 function buildPromptUrl(
@@ -70,41 +59,148 @@ function buildPromptUrl(
   seed: number,
   size: ImageSize,
 ): string {
-  const styleMap: Record<string, string> = {
-    standard: "vector illustration",
-    high: "detailed illustration, high detail",
-    ultra: "artistic, ultra creative, unique style",
-  };
-  const style = styleMap.standard;
   const prompt = encodeURIComponent(
-    `${category} t-shirt print design, ${style}, transparent background, no text, high contrast, bold colors, printable art`,
+    `${category} t-shirt print design, vector illustration, transparent background, no text, high contrast, bold colors, printable art`,
   );
   const dim = size === "1024" ? 1024 : size === "768" ? 768 : 512;
   return `https://image.pollinations.ai/prompt/${prompt}?width=${dim}&height=${dim}&seed=${seed}&nologo=true&model=flux`;
 }
 
-function LazyImage({
-  src,
-  alt,
-  onLoad,
-  onError,
+async function downloadImageAsBlob(url: string): Promise<Blob | null> {
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) return null;
+    return await resp.blob();
+  } catch {
+    return null;
+  }
+}
+
+function ImageCard({
+  img,
+  idx,
+  onRegenerate,
 }: {
-  src: string;
-  alt: string;
-  onLoad: () => void;
-  onError: () => void;
+  img: GeneratedImage;
+  idx: number;
+  onRegenerate: (id: string) => void;
 }) {
-  const ref = useRef<HTMLImageElement>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownload = async () => {
+    setDownloading(true);
+    try {
+      const blob = await downloadImageAsBlob(img.url);
+      if (blob) {
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = `${img.categoryLabel.replace(/\s+/g, "-").toLowerCase()}-design-${img.number}.png`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+        toast.success("Image downloaded!");
+      } else {
+        // Fallback: open in new tab
+        window.open(img.url, "_blank");
+        toast.info("Opened in new tab -- right-click to save.");
+      }
+    } catch {
+      window.open(img.url, "_blank");
+      toast.info("Opened in new tab -- right-click to save.");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   return (
-    <img
-      ref={ref}
-      src={src}
-      alt={alt}
-      loading="lazy"
-      onLoad={onLoad}
-      onError={onError}
-      className="w-full h-full object-cover rounded-t-lg"
-    />
+    <div
+      className="card-dark rounded-xl overflow-hidden"
+      data-ocid={`designs.item.${idx + 1}`}
+    >
+      <div
+        className="relative aspect-square overflow-hidden"
+        style={{ background: "oklch(0.22 0.012 240)" }}
+      >
+        {!loaded && !error && (
+          <div
+            className="absolute inset-0 flex flex-col items-center justify-center gap-2"
+            data-ocid={`designs.item.${idx + 1}.loading_state`}
+          >
+            <Loader2 className="w-6 h-6 animate-spin text-blue-accent" />
+            <span className="text-[10px] text-muted-foreground px-2 text-center">
+              Loading...
+            </span>
+          </div>
+        )}
+        {error ? (
+          <div
+            className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-2"
+            data-ocid={`designs.item.${idx + 1}.error_state`}
+          >
+            <X className="w-6 h-6 text-destructive" />
+            <span className="text-[10px] text-muted-foreground text-center">
+              Failed to load
+            </span>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => onRegenerate(img.id)}
+              className="h-6 px-2 text-[10px] text-blue-accent"
+            >
+              <RefreshCw className="w-3 h-3 mr-1" /> Retry
+            </Button>
+          </div>
+        ) : (
+          <img
+            src={img.url}
+            alt={`${img.categoryLabel} Design #${img.number}`}
+            loading="lazy"
+            onLoad={() => setLoaded(true)}
+            onError={() => setError(true)}
+            className="w-full h-full object-cover rounded-t-lg"
+          />
+        )}
+        <Badge className="absolute top-2 left-2 text-xs bg-blue-accent text-white border-0 text-[10px] px-1.5 py-0.5">
+          {img.categoryLabel.split(" ")[0]}
+        </Badge>
+      </div>
+      <div className="p-2">
+        <p className="text-xs font-medium text-foreground truncate">
+          {img.categoryLabel}
+        </p>
+        <p className="text-[11px] text-muted-foreground">
+          Design #{img.number}
+        </p>
+        <div className="flex gap-1 mt-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            data-ocid={`designs.item.${idx + 1}.secondary_button`}
+            onClick={() => onRegenerate(img.id)}
+            className="h-6 px-2 text-[10px] text-muted-foreground hover:text-blue-accent flex-1"
+          >
+            <RefreshCw className="w-3 h-3 mr-1" /> Regen
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            data-ocid={`designs.item.${idx + 1}.download_button`}
+            onClick={handleDownload}
+            disabled={downloading}
+            className="h-6 px-2 text-[10px] text-muted-foreground hover:text-green-400 flex-1"
+          >
+            {downloading ? (
+              <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+            ) : (
+              <Download className="w-3 h-3 mr-1" />
+            )}
+            Download
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -113,15 +209,14 @@ export default function App() {
     new Set(["animals", "space", "abstract"]),
   );
   const [imageSize, setImageSize] = useState<ImageSize>("512");
-  const [resolution, setResolution] = useState<Resolution>("standard");
   const [quantity, setQuantity] = useState<Quantity>("10");
   const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressLabel, setProgressLabel] = useState("");
   const [generationDone, setGenerationDone] = useState(false);
-  const [pdfModal, setPdfModal] = useState(false);
-  const [pdfProgress, setPdfProgress] = useState(0);
+  const [isZipping, setIsZipping] = useState(false);
+  const [zipProgress, setZipProgress] = useState(0);
 
   const toggleCategory = useCallback((id: string) => {
     setSelectedCategories((prev) => {
@@ -166,8 +261,6 @@ export default function App() {
           number: i,
           seed,
           url: buildPromptUrl(cat.label, seed, imageSize),
-          loaded: false,
-          error: false,
         });
         count++;
         if (count % 10 === 0 || count === total) {
@@ -196,8 +289,6 @@ export default function App() {
             ...img,
             seed: newSeed,
             url: buildPromptUrl(img.categoryLabel, newSeed, imageSize),
-            loaded: false,
-            error: false,
           };
         }),
       );
@@ -205,107 +296,71 @@ export default function App() {
     [imageSize],
   );
 
-  const saveSingleImage = useCallback((url: string, title: string) => {
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${title.replace(/\s+/g, "-").toLowerCase()}.png`;
-    a.target = "_blank";
-    a.click();
-    toast.success("Opening image download...");
-  }, []);
-
-  const generatePDF = useCallback(async () => {
+  const downloadAll = useCallback(async () => {
     if (generatedImages.length === 0) {
-      toast.error("No images to export");
+      toast.error("No images to download");
       return;
     }
-    setPdfModal(true);
-    setPdfProgress(0);
+
+    const JSZipGlobal = (window as any).JSZip;
+    if (!JSZipGlobal) {
+      toast.error("ZIP library not loaded. Please refresh the page.");
+      return;
+    }
+
+    setIsZipping(true);
+    setZipProgress(0);
+    toast.info(`Downloading ${generatedImages.length} images into ZIP...`);
 
     try {
-      // @ts-ignore
-      const { jsPDF } = await import("jspdf");
-      const doc = new jsPDF({
-        orientation: "landscape",
-        unit: "pt",
-        format: "a4",
-      });
-      const pageW = doc.internal.pageSize.getWidth();
-      const pageH = doc.internal.pageSize.getHeight();
-      const cols = 4;
-      const margin = 20;
-      const labelH = 20;
-      const cellW = (pageW - margin * 2) / cols;
-      const imgW = cellW - 10;
-      const imgH = imgW;
-      const cellH = imgH + labelH + 14;
-      let x = margin;
-      let y = margin;
-      let col = 0;
-
+      const zip = new JSZipGlobal();
       const total = generatedImages.length;
-      let processed = 0;
+      let done = 0;
+      let failed = 0;
 
-      for (const img of generatedImages) {
-        try {
-          const resp = await fetch(img.url);
-          const blob = await resp.blob();
-          const dataUrl = await new Promise<string>((res, rej) => {
-            const reader = new FileReader();
-            reader.onload = () => res(reader.result as string);
-            reader.onerror = rej;
-            reader.readAsDataURL(blob);
-          });
-
-          if (y + cellH > pageH - margin && col === 0) {
-            doc.addPage();
-            y = margin;
-          }
-
-          doc.addImage(dataUrl, "JPEG", x + 5, y, imgW, imgH);
-          doc.setFontSize(8);
-          doc.setTextColor(80, 80, 80);
-          doc.text(img.categoryLabel, x + 5, y + imgH + 12);
-          doc.text(`Design #${img.number}`, x + 5, y + imgH + 22);
-        } catch {
-          // skip failed image
-        }
-
-        col++;
-        x = margin + col * cellW;
-        if (col >= cols) {
-          col = 0;
-          x = margin;
-          y += cellH + 10;
-        }
-
-        processed++;
-        setPdfProgress(Math.round((processed / total) * 100));
+      // Fetch in batches of 5 to avoid overwhelming the browser
+      const batchSize = 5;
+      for (let i = 0; i < total; i += batchSize) {
+        const batch = generatedImages.slice(i, i + batchSize);
+        await Promise.all(
+          batch.map(async (img) => {
+            const blob = await downloadImageAsBlob(img.url);
+            if (blob) {
+              const filename = `${img.categoryLabel.replace(/\s+/g, "-").toLowerCase()}-design-${img.number}.png`;
+              zip.file(filename, blob);
+            } else {
+              failed++;
+            }
+            done++;
+            setZipProgress(Math.round((done / total) * 100));
+          }),
+        );
       }
 
-      doc.save("tshirt-designs.pdf");
-      setPdfModal(false);
-      toast.success("PDF downloaded successfully!");
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "tshirt-designs.zip";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+
+      if (failed > 0) {
+        toast.warning(
+          `ZIP downloaded! ${done - failed} images included, ${failed} failed to load.`,
+        );
+      } else {
+        toast.success(`All ${total} images downloaded as ZIP!`);
+      }
     } catch (err) {
       console.error(err);
-      setPdfModal(false);
-      toast.error("PDF generation failed. Please try again.");
+      toast.error("ZIP creation failed. Try downloading images individually.");
+    } finally {
+      setIsZipping(false);
+      setZipProgress(0);
     }
   }, [generatedImages]);
 
-  const markLoaded = useCallback((id: string) => {
-    setGeneratedImages((prev) =>
-      prev.map((img) => (img.id === id ? { ...img, loaded: true } : img)),
-    );
-  }, []);
-
-  const markError = useCallback((id: string) => {
-    setGeneratedImages((prev) =>
-      prev.map((img) => (img.id === id ? { ...img, error: true } : img)),
-    );
-  }, []);
-
-  const displayImages = generatedImages.slice(0, 50);
   const totalImages = generatedImages.length;
 
   return (
@@ -409,30 +464,9 @@ export default function App() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="512">512×512 (Fast)</SelectItem>
-                    <SelectItem value="768">768×768 (Medium)</SelectItem>
-                    <SelectItem value="1024">1024×1024 (HD)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="text-xs text-muted-foreground mb-1.5 block">
-                  Style
-                </Label>
-                <Select
-                  value={resolution}
-                  onValueChange={(v) => setResolution(v as Resolution)}
-                >
-                  <SelectTrigger
-                    data-ocid="config.resolution.select"
-                    className="bg-muted border-border"
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="standard">Standard</SelectItem>
-                    <SelectItem value="high">High Detail</SelectItem>
-                    <SelectItem value="ultra">Ultra Creative</SelectItem>
+                    <SelectItem value="512">512x512 (Fast)</SelectItem>
+                    <SelectItem value="768">768x768 (Medium)</SelectItem>
+                    <SelectItem value="1024">1024x1024 (HD)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -514,6 +548,25 @@ export default function App() {
             </div>
           )}
 
+          {/* ZIP download progress */}
+          {isZipping && (
+            <div className="card-dark rounded-xl p-4 border border-blue-accent/30">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold text-foreground flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin text-blue-accent" />{" "}
+                  Creating ZIP file...
+                </h3>
+                <span className="text-sm text-muted-foreground">
+                  {zipProgress}%
+                </span>
+              </div>
+              <Progress value={zipProgress} className="h-2" />
+              <p className="text-xs text-muted-foreground mt-2">
+                Fetching images from Pollinations.ai and packaging them...
+              </p>
+            </div>
+          )}
+
           {/* Generation done banner */}
           {!isGenerating && generationDone && totalImages > 0 && (
             <div className="card-dark rounded-xl p-4 flex items-center gap-3 border border-green-500/30">
@@ -522,120 +575,39 @@ export default function App() {
                 <span className="font-semibold text-green-400">
                   {totalImages} designs ready!
                 </span>{" "}
-                Images are loading from Pollinations.ai (may take a moment).
+                Images loading from Pollinations.ai. Download individually or
+                save all as ZIP.
               </p>
               <Button
-                data-ocid="pdf.download.primary_button"
-                onClick={generatePDF}
+                data-ocid="zip.download.primary_button"
+                onClick={downloadAll}
+                disabled={isZipping}
                 className="rounded-full border border-blue-accent text-blue-accent bg-transparent hover:bg-blue-accent hover:text-white transition-all px-4 shrink-0"
               >
-                <FileDown className="w-4 h-4 mr-2" />
-                PDF Download
+                {isZipping ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <DownloadCloud className="w-4 h-4 mr-2" />
+                )}
+                Download All (ZIP)
               </Button>
             </div>
           )}
 
-          {/* Results grid */}
+          {/* Results grid -- show ALL images */}
           {totalImages > 0 && (
-            <div className="space-y-4">
-              <div
-                className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4"
-                data-ocid="designs.list"
-              >
-                {displayImages.map((img, idx) => (
-                  <div
-                    key={img.id}
-                    className="card-dark rounded-xl overflow-hidden"
-                    data-ocid={`designs.item.${idx + 1}`}
-                  >
-                    <div
-                      className="relative aspect-square overflow-hidden"
-                      style={{ background: "oklch(0.22 0.012 240)" }}
-                    >
-                      {!img.loaded && !img.error && (
-                        <div
-                          className="absolute inset-0 flex flex-col items-center justify-center gap-2"
-                          data-ocid={`designs.item.${idx + 1}.loading_state`}
-                        >
-                          <Loader2 className="w-6 h-6 animate-spin text-blue-accent" />
-                          <span className="text-[10px] text-muted-foreground px-2 text-center">
-                            Loading from Pollinations.ai...
-                          </span>
-                        </div>
-                      )}
-                      {img.error ? (
-                        <div
-                          className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-2"
-                          data-ocid={`designs.item.${idx + 1}.error_state`}
-                        >
-                          <X className="w-6 h-6 text-destructive" />
-                          <span className="text-[10px] text-muted-foreground text-center">
-                            Failed to load
-                          </span>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => regenerateImage(img.id)}
-                            className="h-6 px-2 text-[10px] text-blue-accent"
-                          >
-                            <RefreshCw className="w-3 h-3 mr-1" /> Retry
-                          </Button>
-                        </div>
-                      ) : (
-                        <LazyImage
-                          src={img.url}
-                          alt={`${img.categoryLabel} Design #${img.number}`}
-                          onLoad={() => markLoaded(img.id)}
-                          onError={() => markError(img.id)}
-                        />
-                      )}
-                      <Badge className="absolute top-2 left-2 text-xs bg-blue-accent text-white border-0 text-[10px] px-1.5 py-0.5">
-                        {img.categoryLabel.split(" ")[0]}
-                      </Badge>
-                    </div>
-                    <div className="p-2">
-                      <p className="text-xs font-medium text-foreground truncate">
-                        {img.categoryLabel}
-                      </p>
-                      <p className="text-[11px] text-muted-foreground">
-                        Design #{img.number}
-                      </p>
-                      <div className="flex gap-1 mt-2">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          data-ocid={`designs.item.${idx + 1}.secondary_button`}
-                          onClick={() => regenerateImage(img.id)}
-                          className="h-6 px-2 text-[10px] text-muted-foreground hover:text-blue-accent flex-1"
-                        >
-                          <RefreshCw className="w-3 h-3 mr-1" /> Regen
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          data-ocid={`designs.item.${idx + 1}.save_button`}
-                          onClick={() =>
-                            saveSingleImage(
-                              img.url,
-                              `${img.categoryLabel}-design-${img.number}`,
-                            )
-                          }
-                          className="h-6 px-2 text-[10px] text-muted-foreground hover:text-green-400 flex-1"
-                        >
-                          <Save className="w-3 h-3 mr-1" /> Save
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {totalImages > 50 && (
-                <p className="text-center text-sm text-muted-foreground py-2">
-                  Showing 50 of {totalImages} designs. Download PDF to get all
-                  images.
-                </p>
-              )}
+            <div
+              className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4"
+              data-ocid="designs.list"
+            >
+              {generatedImages.map((img, idx) => (
+                <ImageCard
+                  key={img.id}
+                  img={img}
+                  idx={idx}
+                  onRegenerate={regenerateImage}
+                />
+              ))}
             </div>
           )}
 
@@ -672,7 +644,7 @@ export default function App() {
       <footer className="border-t border-border py-4 mt-auto">
         <div className="max-w-[1400px] mx-auto px-6 flex items-center justify-between">
           <p className="text-xs text-muted-foreground">
-            © {new Date().getFullYear()}. Built with ❤️ using{" "}
+            © {new Date().getFullYear()}. Built with love using{" "}
             <a
               href={`https://caffeine.ai?utm_source=caffeine-footer&utm_medium=referral&utm_content=${encodeURIComponent(window.location.hostname)}`}
               target="_blank"
@@ -687,33 +659,6 @@ export default function App() {
           </p>
         </div>
       </footer>
-
-      {/* PDF Generation Modal */}
-      <Dialog open={pdfModal} onOpenChange={setPdfModal}>
-        <DialogContent
-          className="card-dark border-border"
-          data-ocid="pdf.modal"
-        >
-          <DialogHeader>
-            <DialogTitle className="text-foreground flex items-center gap-2">
-              <Download className="w-5 h-5 text-blue-accent" />
-              Generating PDF...
-            </DialogTitle>
-            <DialogDescription className="text-muted-foreground">
-              This may take a few minutes for large batches. Please wait.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="py-4 space-y-3">
-            <Progress value={pdfProgress} className="h-3" />
-            <p className="text-sm text-muted-foreground text-center">
-              {pdfProgress}% complete
-            </p>
-            <p className="text-xs text-center text-muted-foreground">
-              Processing {generatedImages.length} images into PDF...
-            </p>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
