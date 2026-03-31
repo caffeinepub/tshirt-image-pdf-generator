@@ -21,7 +21,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 const ALL_CATEGORIES = [
@@ -41,6 +41,8 @@ const ALL_CATEGORIES = [
   { id: "flowers", label: "Flowers & Floral", emoji: "🌸" },
   { id: "funny", label: "Funny & Cartoon", emoji: "😂" },
 ];
+
+const PAGE_SIZE = 20;
 
 type ImageSize = "512" | "768" | "1024";
 type Quantity = "10" | "50" | "100";
@@ -102,7 +104,6 @@ function ImageCard({
         setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
         toast.success("Image downloaded!");
       } else {
-        // Fallback: open in new tab
         window.open(img.url, "_blank");
         toast.info("Opened in new tab -- right-click to save.");
       }
@@ -124,24 +125,18 @@ function ImageCard({
         style={{ background: "oklch(0.22 0.012 240)" }}
       >
         {!loaded && !error && (
-          <div
-            className="absolute inset-0 flex flex-col items-center justify-center gap-2"
-            data-ocid={`designs.item.${idx + 1}.loading_state`}
-          >
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
             <Loader2 className="w-6 h-6 animate-spin text-blue-accent" />
-            <span className="text-[10px] text-muted-foreground px-2 text-center">
+            <span className="text-[10px] text-muted-foreground">
               Loading...
             </span>
           </div>
         )}
         {error ? (
-          <div
-            className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-2"
-            data-ocid={`designs.item.${idx + 1}.error_state`}
-          >
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-2">
             <X className="w-6 h-6 text-destructive" />
             <span className="text-[10px] text-muted-foreground text-center">
-              Failed to load
+              Failed
             </span>
             <Button
               size="sm"
@@ -160,9 +155,10 @@ function ImageCard({
             onLoad={() => setLoaded(true)}
             onError={() => setError(true)}
             className="w-full h-full object-cover rounded-t-lg"
+            style={{ display: loaded ? "block" : "block" }}
           />
         )}
-        <Badge className="absolute top-2 left-2 text-xs bg-blue-accent text-white border-0 text-[10px] px-1.5 py-0.5">
+        <Badge className="absolute top-2 left-2 text-[10px] px-1.5 py-0.5 bg-blue-accent text-white border-0">
           {img.categoryLabel.split(" ")[0]}
         </Badge>
       </div>
@@ -177,7 +173,6 @@ function ImageCard({
           <Button
             size="sm"
             variant="ghost"
-            data-ocid={`designs.item.${idx + 1}.secondary_button`}
             onClick={() => onRegenerate(img.id)}
             className="h-6 px-2 text-[10px] text-muted-foreground hover:text-blue-accent flex-1"
           >
@@ -186,7 +181,6 @@ function ImageCard({
           <Button
             size="sm"
             variant="ghost"
-            data-ocid={`designs.item.${idx + 1}.download_button`}
             onClick={handleDownload}
             disabled={downloading}
             className="h-6 px-2 text-[10px] text-muted-foreground hover:text-green-400 flex-1"
@@ -217,6 +211,8 @@ export default function App() {
   const [generationDone, setGenerationDone] = useState(false);
   const [isZipping, setIsZipping] = useState(false);
   const [zipProgress, setZipProgress] = useState(0);
+  // Pagination: only render PAGE_SIZE images at a time
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
   const toggleCategory = useCallback((id: string) => {
     setSelectedCategories((prev) => {
@@ -240,8 +236,12 @@ export default function App() {
     setIsGenerating(true);
     setGenerationDone(false);
     setGeneratedImages([]);
+    setVisibleCount(PAGE_SIZE);
     setProgress(0);
     setProgressLabel("Preparing images...");
+
+    // Small delay so React can flush the loading UI before the loop starts
+    await new Promise((r) => setTimeout(r, 50));
 
     const qty = Number.parseInt(quantity);
     const categories = ALL_CATEGORIES.filter((c) =>
@@ -266,7 +266,7 @@ export default function App() {
         if (count % 10 === 0 || count === total) {
           setProgress(Math.round((count / total) * 100));
           setProgressLabel(`Preparing ${count} of ${total} images...`);
-          await new Promise((r) => setTimeout(r, 10));
+          await new Promise((r) => setTimeout(r, 5));
         }
       }
     }
@@ -301,24 +301,19 @@ export default function App() {
       toast.error("No images to download");
       return;
     }
-
     const JSZipGlobal = (window as any).JSZip;
     if (!JSZipGlobal) {
       toast.error("ZIP library not loaded. Please refresh the page.");
       return;
     }
-
     setIsZipping(true);
     setZipProgress(0);
     toast.info(`Downloading ${generatedImages.length} images into ZIP...`);
-
     try {
       const zip = new JSZipGlobal();
       const total = generatedImages.length;
       let done = 0;
       let failed = 0;
-
-      // Fetch in batches of 5 to avoid overwhelming the browser
       const batchSize = 5;
       for (let i = 0; i < total; i += batchSize) {
         const batch = generatedImages.slice(i, i + batchSize);
@@ -336,7 +331,6 @@ export default function App() {
           }),
         );
       }
-
       const zipBlob = await zip.generateAsync({ type: "blob" });
       const url = URL.createObjectURL(zipBlob);
       const a = document.createElement("a");
@@ -344,17 +338,16 @@ export default function App() {
       a.download = "tshirt-designs.zip";
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 2000);
-
       if (failed > 0) {
         toast.warning(
-          `ZIP downloaded! ${done - failed} images included, ${failed} failed to load.`,
+          `ZIP ready! ${done - failed} images included, ${failed} failed.`,
         );
       } else {
         toast.success(`All ${total} images downloaded as ZIP!`);
       }
     } catch (err) {
       console.error(err);
-      toast.error("ZIP creation failed. Try downloading images individually.");
+      toast.error("ZIP creation failed. Try downloading individually.");
     } finally {
       setIsZipping(false);
       setZipProgress(0);
@@ -362,6 +355,12 @@ export default function App() {
   }, [generatedImages]);
 
   const totalImages = generatedImages.length;
+  // Only render up to visibleCount images -- prevents browser freeze with 100-300 items
+  const visibleImages = useMemo(
+    () => generatedImages.slice(0, visibleCount),
+    [generatedImages, visibleCount],
+  );
+  const hasMore = visibleCount < totalImages;
 
   return (
     <div
@@ -390,9 +389,7 @@ export default function App() {
               PrintGenius <span className="text-blue-accent">AI</span>
             </span>
           </div>
-
           <Button
-            data-ocid="header.primary_button"
             onClick={startGenerating}
             disabled={isGenerating}
             className="bg-blue-accent hover:opacity-90 text-white rounded-full px-5 glow-blue-sm"
@@ -418,7 +415,6 @@ export default function App() {
             <h2 className="text-sm font-bold uppercase tracking-widest text-muted-foreground mb-4">
               Design Parameters
             </h2>
-
             <div className="mb-4">
               <p className="text-xs font-semibold uppercase tracking-wider text-blue-accent mb-3">
                 Categories
@@ -431,7 +427,6 @@ export default function App() {
                   <div key={cat.id} className="flex items-center gap-2">
                     <Checkbox
                       id={`cat-${cat.id}`}
-                      data-ocid={`sidebar.${cat.id}.checkbox`}
                       checked={selectedCategories.has(cat.id)}
                       onCheckedChange={() => toggleCategory(cat.id)}
                       className="border-border data-[state=checked]:bg-blue-accent data-[state=checked]:border-blue-accent"
@@ -447,7 +442,6 @@ export default function App() {
                 ))}
               </div>
             </div>
-
             <div className="space-y-3 mb-4">
               <div>
                 <Label className="text-xs text-muted-foreground mb-1.5 block">
@@ -457,10 +451,7 @@ export default function App() {
                   value={imageSize}
                   onValueChange={(v) => setImageSize(v as ImageSize)}
                 >
-                  <SelectTrigger
-                    data-ocid="config.size.select"
-                    className="bg-muted border-border"
-                  >
+                  <SelectTrigger className="bg-muted border-border">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -478,10 +469,7 @@ export default function App() {
                   value={quantity}
                   onValueChange={(v) => setQuantity(v as Quantity)}
                 >
-                  <SelectTrigger
-                    data-ocid="config.quantity.select"
-                    className="bg-muted border-border"
-                  >
+                  <SelectTrigger className="bg-muted border-border">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -492,9 +480,7 @@ export default function App() {
                 </Select>
               </div>
             </div>
-
             <Button
-              data-ocid="sidebar.generate.primary_button"
               onClick={startGenerating}
               disabled={isGenerating || selectedCategories.size === 0}
               className="w-full bg-blue-accent hover:opacity-90 text-white glow-blue-sm"
@@ -526,16 +512,13 @@ export default function App() {
             )}
           </div>
 
-          {/* Progress card */}
+          {/* Progress */}
           {isGenerating && (
-            <div
-              className="card-dark rounded-xl p-5"
-              data-ocid="generation.loading_state"
-            >
+            <div className="card-dark rounded-xl p-5">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="font-semibold text-foreground flex items-center gap-2">
                   <Loader2 className="w-4 h-4 animate-spin text-blue-accent" />{" "}
-                  Generating Your Designs...
+                  Generating...
                 </h3>
                 <span className="text-sm text-muted-foreground">
                   {progress}%
@@ -548,26 +531,23 @@ export default function App() {
             </div>
           )}
 
-          {/* ZIP download progress */}
+          {/* ZIP progress */}
           {isZipping && (
             <div className="card-dark rounded-xl p-4 border border-blue-accent/30">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="font-semibold text-foreground flex items-center gap-2">
                   <Loader2 className="w-4 h-4 animate-spin text-blue-accent" />{" "}
-                  Creating ZIP file...
+                  Creating ZIP...
                 </h3>
                 <span className="text-sm text-muted-foreground">
                   {zipProgress}%
                 </span>
               </div>
               <Progress value={zipProgress} className="h-2" />
-              <p className="text-xs text-muted-foreground mt-2">
-                Fetching images from Pollinations.ai and packaging them...
-              </p>
             </div>
           )}
 
-          {/* Generation done banner */}
+          {/* Done banner */}
           {!isGenerating && generationDone && totalImages > 0 && (
             <div className="card-dark rounded-xl p-4 flex items-center gap-3 border border-green-500/30">
               <CheckCircle2 className="w-5 h-5 text-green-400 shrink-0" />
@@ -575,11 +555,10 @@ export default function App() {
                 <span className="font-semibold text-green-400">
                   {totalImages} designs ready!
                 </span>{" "}
-                Images loading from Pollinations.ai. Download individually or
-                save all as ZIP.
+                Showing {Math.min(visibleCount, totalImages)} of {totalImages}.
+                Download individually or save all as ZIP.
               </p>
               <Button
-                data-ocid="zip.download.primary_button"
                 onClick={downloadAll}
                 disabled={isZipping}
                 className="rounded-full border border-blue-accent text-blue-accent bg-transparent hover:bg-blue-accent hover:text-white transition-all px-4 shrink-0"
@@ -594,13 +573,10 @@ export default function App() {
             </div>
           )}
 
-          {/* Results grid -- show ALL images */}
-          {totalImages > 0 && (
-            <div
-              className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4"
-              data-ocid="designs.list"
-            >
-              {generatedImages.map((img, idx) => (
+          {/* Image grid -- paginated */}
+          {visibleImages.length > 0 && (
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+              {visibleImages.map((img, idx) => (
                 <ImageCard
                   key={img.id}
                   img={img}
@@ -611,12 +587,22 @@ export default function App() {
             </div>
           )}
 
+          {/* Load More */}
+          {hasMore && (
+            <div className="flex justify-center py-4">
+              <Button
+                onClick={() => setVisibleCount((prev) => prev + PAGE_SIZE)}
+                variant="outline"
+                className="border-blue-accent text-blue-accent hover:bg-blue-accent hover:text-white px-8"
+              >
+                Load More ({totalImages - visibleCount} remaining)
+              </Button>
+            </div>
+          )}
+
           {/* Empty state */}
           {!isGenerating && totalImages === 0 && (
-            <div
-              className="card-dark rounded-2xl p-16 text-center"
-              data-ocid="designs.empty_state"
-            >
+            <div className="card-dark rounded-2xl p-16 text-center">
               <div className="w-20 h-20 rounded-2xl bg-blue-accent/10 flex items-center justify-center mx-auto mb-4 glow-blue">
                 <Shirt className="w-10 h-10 text-blue-accent" />
               </div>
@@ -628,12 +614,10 @@ export default function App() {
                 to create stunning t-shirt print designs using AI.
               </p>
               <Button
-                data-ocid="empty.generate.primary_button"
                 onClick={startGenerating}
                 className="bg-blue-accent hover:opacity-90 text-white rounded-full px-8 glow-blue-sm"
               >
-                <Zap className="w-4 h-4 mr-2" />
-                Start Generating
+                <Zap className="w-4 h-4 mr-2" /> Start Generating
               </Button>
             </div>
           )}
@@ -644,7 +628,7 @@ export default function App() {
       <footer className="border-t border-border py-4 mt-auto">
         <div className="max-w-[1400px] mx-auto px-6 flex items-center justify-between">
           <p className="text-xs text-muted-foreground">
-            © {new Date().getFullYear()}. Built with love using{" "}
+            © {new Date().getFullYear()}. Built with{" "}
             <a
               href={`https://caffeine.ai?utm_source=caffeine-footer&utm_medium=referral&utm_content=${encodeURIComponent(window.location.hostname)}`}
               target="_blank"
