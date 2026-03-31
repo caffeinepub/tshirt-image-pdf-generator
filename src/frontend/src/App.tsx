@@ -29,7 +29,6 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 
@@ -71,8 +70,14 @@ function buildPromptUrl(
   seed: number,
   size: ImageSize,
 ): string {
+  const styleMap: Record<string, string> = {
+    standard: "vector illustration",
+    high: "detailed illustration, high detail",
+    ultra: "artistic, ultra creative, unique style",
+  };
+  const style = styleMap.standard;
   const prompt = encodeURIComponent(
-    `${category} t-shirt print design, vector illustration, transparent background, no text, high contrast, bold colors, printable art`,
+    `${category} t-shirt print design, ${style}, transparent background, no text, high contrast, bold colors, printable art`,
   );
   const dim = size === "1024" ? 1024 : size === "768" ? 768 : 512;
   return `https://image.pollinations.ai/prompt/${prompt}?width=${dim}&height=${dim}&seed=${seed}&nologo=true&model=flux`;
@@ -107,16 +112,14 @@ export default function App() {
   const [selectedCategories, setSelectedCategories] = useState<Set<string>>(
     new Set(["animals", "space", "abstract"]),
   );
-  const [activeTab, setActiveTab] = useState<
-    "dashboard" | "generate" | "library"
-  >("generate");
   const [imageSize, setImageSize] = useState<ImageSize>("512");
   const [resolution, setResolution] = useState<Resolution>("standard");
-  const [quantity, setQuantity] = useState<Quantity>("100");
+  const [quantity, setQuantity] = useState<Quantity>("10");
   const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressLabel, setProgressLabel] = useState("");
+  const [generationDone, setGenerationDone] = useState(false);
   const [pdfModal, setPdfModal] = useState(false);
   const [pdfProgress, setPdfProgress] = useState(0);
 
@@ -140,8 +143,10 @@ export default function App() {
       return;
     }
     setIsGenerating(true);
+    setGenerationDone(false);
     setGeneratedImages([]);
     setProgress(0);
+    setProgressLabel("Preparing images...");
 
     const qty = Number.parseInt(quantity);
     const categories = ALL_CATEGORIES.filter((c) =>
@@ -155,7 +160,7 @@ export default function App() {
       for (let i = 1; i <= qty; i++) {
         const seed = Math.floor(Math.random() * 99999) + i;
         allImages.push({
-          id: `${cat.id}-${i}`,
+          id: `${cat.id}-${i}-${seed}`,
           categoryId: cat.id,
           categoryLabel: cat.label,
           number: i,
@@ -167,8 +172,8 @@ export default function App() {
         count++;
         if (count % 10 === 0 || count === total) {
           setProgress(Math.round((count / total) * 100));
-          setProgressLabel(`Loading ${count} of ${total} images...`);
-          await new Promise((r) => setTimeout(r, 50));
+          setProgressLabel(`Preparing ${count} of ${total} images...`);
+          await new Promise((r) => setTimeout(r, 10));
         }
       }
     }
@@ -177,7 +182,8 @@ export default function App() {
     setProgress(100);
     setProgressLabel(`${total} images ready!`);
     setIsGenerating(false);
-    toast.success(`${total} images generated!`);
+    setGenerationDone(true);
+    toast.success(`${total} image URLs ready! Loading from Pollinations.ai...`);
   }, [selectedCategories, quantity, imageSize]);
 
   const regenerateImage = useCallback(
@@ -205,7 +211,7 @@ export default function App() {
     a.download = `${title.replace(/\s+/g, "-").toLowerCase()}.png`;
     a.target = "_blank";
     a.click();
-    toast.success("Image download started!");
+    toast.success("Opening image download...");
   }, []);
 
   const generatePDF = useCallback(async () => {
@@ -217,6 +223,7 @@ export default function App() {
     setPdfProgress(0);
 
     try {
+      // @ts-ignore
       const { jsPDF } = await import("jspdf");
       const doc = new jsPDF({
         orientation: "landscape",
@@ -298,7 +305,7 @@ export default function App() {
     );
   }, []);
 
-  const displayImages = generatedImages.slice(0, 50); // show first 50 in grid
+  const displayImages = generatedImages.slice(0, 50);
   const totalImages = generatedImages.length;
 
   return (
@@ -329,37 +336,21 @@ export default function App() {
             </span>
           </div>
 
-          <nav className="hidden md:flex items-center gap-1">
-            {(["dashboard", "generate", "library"] as const).map((tab) => (
-              <button
-                type="button"
-                key={tab}
-                data-ocid={`nav.${tab}.link`}
-                onClick={() => setActiveTab(tab)}
-                className={`px-4 py-2 rounded-md text-sm font-medium capitalize transition-colors relative ${
-                  activeTab === tab
-                    ? "text-blue-accent"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                {activeTab === tab && (
-                  <motion.div
-                    layoutId="nav-underline"
-                    className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-accent rounded-full"
-                  />
-                )}
-              </button>
-            ))}
-          </nav>
-
           <Button
             data-ocid="header.primary_button"
-            onClick={() => setActiveTab("generate")}
+            onClick={startGenerating}
+            disabled={isGenerating}
             className="bg-blue-accent hover:opacity-90 text-white rounded-full px-5 glow-blue-sm"
           >
-            <Zap className="w-4 h-4 mr-2" />
-            Start Generating
+            {isGenerating ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Generating...
+              </>
+            ) : (
+              <>
+                <Zap className="w-4 h-4 mr-2" /> Start Generating
+              </>
+            )}
           </Button>
         </div>
       </header>
@@ -380,7 +371,7 @@ export default function App() {
               <p className="text-xs text-muted-foreground mb-3">
                 {selectedCategories.size}/12 selected
               </p>
-              <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
+              <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
                 {ALL_CATEGORIES.map((cat) => (
                   <div key={cat.id} className="flex items-center gap-2">
                     <Checkbox
@@ -402,46 +393,7 @@ export default function App() {
               </div>
             </div>
 
-            <Button
-              data-ocid="sidebar.generate.primary_button"
-              onClick={startGenerating}
-              disabled={isGenerating || selectedCategories.size === 0}
-              className="w-full bg-blue-accent hover:opacity-90 text-white glow-blue-sm"
-            >
-              {isGenerating ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />{" "}
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <Zap className="w-4 h-4 mr-2" /> Generate Designs
-                </>
-              )}
-            </Button>
-          </div>
-        </aside>
-
-        {/* Main content */}
-        <main className="flex-1 min-w-0 space-y-6">
-          <div className="flex items-center justify-between">
-            <h1 className="text-4xl font-bold text-foreground tracking-tight">
-              Generate
-            </h1>
-            {totalImages > 0 && (
-              <Badge className="bg-blue-accent text-white px-3 py-1">
-                {totalImages} designs ready
-              </Badge>
-            )}
-          </div>
-
-          {/* Config card */}
-          <div className="card-dark rounded-xl p-5">
-            <h3 className="font-semibold text-foreground mb-4 flex items-center gap-2">
-              <Zap className="w-4 h-4 text-blue-accent" />
-              New Generation
-            </h3>
-            <div className="grid grid-cols-3 gap-4">
+            <div className="space-y-3 mb-4">
               <div>
                 <Label className="text-xs text-muted-foreground mb-1.5 block">
                   Image Size
@@ -506,167 +458,190 @@ export default function App() {
                 </Select>
               </div>
             </div>
+
+            <Button
+              data-ocid="sidebar.generate.primary_button"
+              onClick={startGenerating}
+              disabled={isGenerating || selectedCategories.size === 0}
+              className="w-full bg-blue-accent hover:opacity-90 text-white glow-blue-sm"
+            >
+              {isGenerating ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />{" "}
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Zap className="w-4 h-4 mr-2" /> Generate Designs
+                </>
+              )}
+            </Button>
+          </div>
+        </aside>
+
+        {/* Main content */}
+        <main className="flex-1 min-w-0 space-y-6">
+          <div className="flex items-center justify-between">
+            <h1 className="text-4xl font-bold text-foreground tracking-tight">
+              Generate
+            </h1>
+            {totalImages > 0 && (
+              <Badge className="bg-blue-accent text-white px-3 py-1">
+                {totalImages} designs ready
+              </Badge>
+            )}
           </div>
 
           {/* Progress card */}
-          <AnimatePresence>
-            {(isGenerating || progress > 0) && (
-              <motion.div
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="card-dark rounded-xl p-5"
-                data-ocid="generation.loading_state"
-              >
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-semibold text-foreground flex items-center gap-2">
-                    {isGenerating ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin text-blue-accent" />{" "}
-                        Generating Your Designs...
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircle2 className="w-4 h-4 text-green-400" />{" "}
-                        Generation Complete!
-                      </>
-                    )}
-                  </h3>
-                  <span className="text-sm text-muted-foreground">
-                    {progress}%
-                  </span>
-                </div>
-                <Progress value={progress} className="h-2 progress-track" />
-                <p className="text-xs text-muted-foreground mt-2">
-                  {progressLabel}
-                </p>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          {isGenerating && (
+            <div
+              className="card-dark rounded-xl p-5"
+              data-ocid="generation.loading_state"
+            >
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold text-foreground flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin text-blue-accent" />{" "}
+                  Generating Your Designs...
+                </h3>
+                <span className="text-sm text-muted-foreground">
+                  {progress}%
+                </span>
+              </div>
+              <Progress value={progress} className="h-2 progress-track" />
+              <p className="text-xs text-muted-foreground mt-2">
+                {progressLabel}
+              </p>
+            </div>
+          )}
 
-          {/* Results */}
-          <AnimatePresence>
-            {generatedImages.length > 0 && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="space-y-4"
+          {/* Generation done banner */}
+          {!isGenerating && generationDone && totalImages > 0 && (
+            <div className="card-dark rounded-xl p-4 flex items-center gap-3 border border-green-500/30">
+              <CheckCircle2 className="w-5 h-5 text-green-400 shrink-0" />
+              <p className="text-sm text-foreground flex-1">
+                <span className="font-semibold text-green-400">
+                  {totalImages} designs ready!
+                </span>{" "}
+                Images are loading from Pollinations.ai (may take a moment).
+              </p>
+              <Button
+                data-ocid="pdf.download.primary_button"
+                onClick={generatePDF}
+                className="rounded-full border border-blue-accent text-blue-accent bg-transparent hover:bg-blue-accent hover:text-white transition-all px-4 shrink-0"
               >
-                {/* PDF Download CTA */}
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold text-foreground">
-                    Latest Generated Designs
-                  </h3>
-                  <Button
-                    data-ocid="pdf.download.primary_button"
-                    onClick={generatePDF}
-                    className="rounded-full border border-blue-accent text-blue-accent bg-transparent hover:bg-blue-accent hover:text-white transition-all glow-blue px-6"
+                <FileDown className="w-4 h-4 mr-2" />
+                PDF Download
+              </Button>
+            </div>
+          )}
+
+          {/* Results grid */}
+          {totalImages > 0 && (
+            <div className="space-y-4">
+              <div
+                className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4"
+                data-ocid="designs.list"
+              >
+                {displayImages.map((img, idx) => (
+                  <div
+                    key={img.id}
+                    className="card-dark rounded-xl overflow-hidden"
+                    data-ocid={`designs.item.${idx + 1}`}
                   >
-                    <FileDown className="w-4 h-4 mr-2" />
-                    PDF Download ({totalImages} images)
-                  </Button>
-                </div>
-
-                {/* Image grid */}
-                <div
-                  className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4"
-                  data-ocid="designs.list"
-                >
-                  {displayImages.map((img, idx) => (
-                    <motion.div
-                      key={img.id}
-                      initial={{ opacity: 0, scale: 0.9 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      transition={{ delay: Math.min(idx * 0.02, 0.5) }}
-                      className="card-dark rounded-xl overflow-hidden group"
-                      data-ocid={`designs.item.${idx + 1}`}
+                    <div
+                      className="relative aspect-square overflow-hidden"
+                      style={{ background: "oklch(0.22 0.012 240)" }}
                     >
-                      <div
-                        className="relative aspect-square overflow-hidden"
-                        style={{ background: "oklch(0.22 0.012 240)" }}
-                      >
-                        {!img.loaded && !img.error && (
-                          <div
-                            className="absolute inset-0 flex items-center justify-center"
-                            data-ocid={`designs.item.${idx + 1}.loading_state`}
-                          >
-                            <Loader2 className="w-6 h-6 animate-spin text-blue-accent" />
-                          </div>
-                        )}
-                        {img.error ? (
-                          <div
-                            className="absolute inset-0 flex flex-col items-center justify-center gap-1"
-                            data-ocid={`designs.item.${idx + 1}.error_state`}
-                          >
-                            <X className="w-6 h-6 text-destructive" />
-                            <span className="text-xs text-muted-foreground">
-                              Failed
-                            </span>
-                          </div>
-                        ) : (
-                          <LazyImage
-                            src={img.url}
-                            alt={`${img.categoryLabel} Design #${img.number}`}
-                            onLoad={() => markLoaded(img.id)}
-                            onError={() => markError(img.id)}
-                          />
-                        )}
-                        <Badge className="absolute top-2 left-2 text-xs bg-blue-accent text-white border-0 text-[10px] px-1.5 py-0.5">
-                          {img.categoryLabel.split(" ")[0]}
-                        </Badge>
-                      </div>
-                      <div className="p-2">
-                        <p className="text-xs font-medium text-foreground truncate">
-                          {img.categoryLabel}
-                        </p>
-                        <p className="text-[11px] text-muted-foreground">
-                          Design #{img.number}
-                        </p>
-                        <div className="flex gap-1 mt-2">
+                      {!img.loaded && !img.error && (
+                        <div
+                          className="absolute inset-0 flex flex-col items-center justify-center gap-2"
+                          data-ocid={`designs.item.${idx + 1}.loading_state`}
+                        >
+                          <Loader2 className="w-6 h-6 animate-spin text-blue-accent" />
+                          <span className="text-[10px] text-muted-foreground px-2 text-center">
+                            Loading from Pollinations.ai...
+                          </span>
+                        </div>
+                      )}
+                      {img.error ? (
+                        <div
+                          className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-2"
+                          data-ocid={`designs.item.${idx + 1}.error_state`}
+                        >
+                          <X className="w-6 h-6 text-destructive" />
+                          <span className="text-[10px] text-muted-foreground text-center">
+                            Failed to load
+                          </span>
                           <Button
                             size="sm"
                             variant="ghost"
-                            data-ocid={`designs.item.${idx + 1}.secondary_button`}
                             onClick={() => regenerateImage(img.id)}
-                            className="h-6 px-2 text-[10px] text-muted-foreground hover:text-blue-accent flex-1"
+                            className="h-6 px-2 text-[10px] text-blue-accent"
                           >
-                            <RefreshCw className="w-3 h-3 mr-1" /> Regen
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            data-ocid={`designs.item.${idx + 1}.save_button`}
-                            onClick={() =>
-                              saveSingleImage(
-                                img.url,
-                                `${img.categoryLabel}-design-${img.number}`,
-                              )
-                            }
-                            className="h-6 px-2 text-[10px] text-muted-foreground hover:text-green-400 flex-1"
-                          >
-                            <Save className="w-3 h-3 mr-1" /> Save
+                            <RefreshCw className="w-3 h-3 mr-1" /> Retry
                           </Button>
                         </div>
+                      ) : (
+                        <LazyImage
+                          src={img.url}
+                          alt={`${img.categoryLabel} Design #${img.number}`}
+                          onLoad={() => markLoaded(img.id)}
+                          onError={() => markError(img.id)}
+                        />
+                      )}
+                      <Badge className="absolute top-2 left-2 text-xs bg-blue-accent text-white border-0 text-[10px] px-1.5 py-0.5">
+                        {img.categoryLabel.split(" ")[0]}
+                      </Badge>
+                    </div>
+                    <div className="p-2">
+                      <p className="text-xs font-medium text-foreground truncate">
+                        {img.categoryLabel}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">
+                        Design #{img.number}
+                      </p>
+                      <div className="flex gap-1 mt-2">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          data-ocid={`designs.item.${idx + 1}.secondary_button`}
+                          onClick={() => regenerateImage(img.id)}
+                          className="h-6 px-2 text-[10px] text-muted-foreground hover:text-blue-accent flex-1"
+                        >
+                          <RefreshCw className="w-3 h-3 mr-1" /> Regen
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          data-ocid={`designs.item.${idx + 1}.save_button`}
+                          onClick={() =>
+                            saveSingleImage(
+                              img.url,
+                              `${img.categoryLabel}-design-${img.number}`,
+                            )
+                          }
+                          className="h-6 px-2 text-[10px] text-muted-foreground hover:text-green-400 flex-1"
+                        >
+                          <Save className="w-3 h-3 mr-1" /> Save
+                        </Button>
                       </div>
-                    </motion.div>
-                  ))}
-                </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
 
-                {totalImages > 50 && (
-                  <p className="text-center text-sm text-muted-foreground py-2">
-                    Showing 50 of {totalImages} designs. Download PDF for all
-                    images.
-                  </p>
-                )}
-              </motion.div>
-            )}
-          </AnimatePresence>
+              {totalImages > 50 && (
+                <p className="text-center text-sm text-muted-foreground py-2">
+                  Showing 50 of {totalImages} designs. Download PDF to get all
+                  images.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Empty state */}
-          {!isGenerating && generatedImages.length === 0 && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
+          {!isGenerating && totalImages === 0 && (
+            <div
               className="card-dark rounded-2xl p-16 text-center"
               data-ocid="designs.empty_state"
             >
@@ -688,7 +663,7 @@ export default function App() {
                 <Zap className="w-4 h-4 mr-2" />
                 Start Generating
               </Button>
-            </motion.div>
+            </div>
           )}
         </main>
       </div>
